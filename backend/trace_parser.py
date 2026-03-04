@@ -54,9 +54,16 @@ def extract_leading_diagnosis(response: str) -> Optional[str]:
     """Extract the leading/top diagnosis from a response."""
 
     patterns = [
-        r"(?:leading|top|primary|most likely)\s*diagnosis[:\s]*\*?\*?([^\n*]+)",
-        r"1\.\s*\*?\*?([^\n*—\-(]+)",  # First item in numbered list
-        r"(?:final|revised)\s*(?:leading)?\s*diagnosis[:\s]*\*?\*?([^\n*]+)",
+        # Markdown header followed by diagnosis on next line (GPT-5.1 style)
+        r"#{1,3}\s*(?:final\s*)?(?:leading|top|primary|most likely)\s*diagnosis\s*\n+\s*\*{0,2}([^\n*]+)",
+        # Inline bold label with bold value (Gemini style)
+        r"\*{0,2}(?:final\s*)?(?:leading|top|primary|most likely)\s*diagnosis[:\s]*\*{0,2}\s*\*{0,2}([^\n*]+)",
+        # Plain text label
+        r"(?:final\s*)?(?:leading|top|primary|most likely)\s*diagnosis[:\s]*\*{0,2}([^\n*]+)",
+        # Revised diagnosis
+        r"(?:final|revised)\s*(?:leading)?\s*diagnosis[:\s]*\*{0,2}([^\n*]+)",
+        # First item in numbered list as fallback
+        r"1\.\s*\*{0,2}([^\n*—\-(]+)",
     ]
 
     for pattern in patterns:
