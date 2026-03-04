@@ -1,0 +1,14 @@
+[
+    {
+        "case_id": "NEJM_CPC_2024_01",
+        "source": "NEJM Case Records of MGH",
+        "difficulty": "easy",
+        "category": "infectious",
+        "presentation": "A 34-year-old woman presents to the emergency department with 3 days of fever (39.2°C), dysuria, and right flank pain. She has no significant medical history. On examination, she has right costovertebral angle tenderness...",
+        "labs": "WBC 14,200 with left shift. Urinalysis: positive leukocyte esterase, nitrites, >100 WBC/hpf, many bacteria. Cr 0.9.",
+        "additional": "",
+        "ground_truth": "Acute pyelonephritis",
+        "ground_truth_category": "primary"
+    }
+]
+
