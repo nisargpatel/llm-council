@@ -9,6 +9,8 @@ import numpy as np
 from scipy import stats
 from pathlib import Path
 import warnings
+from backend.config import MODEL_METADATA, PROVIDER_PAIRS
+
 
 # For the capability-scaling correlation
 from scipy.stats import spearmanr, pearsonr
@@ -421,7 +423,7 @@ def secondary_analysis(df: pd.DataFrame) -> dict:
     return results
 
 
-ef generate_summary_tables(primary: dict, secondary: dict, df: pd.DataFrame, within_provider: dict = None, capability: dict = None) -> str:
+def generate_summary_tables(primary: dict, secondary: dict, df: pd.DataFrame, within_provider: dict = None, capability: dict = None) -> str:
     """Generate markdown summary tables for poster/paper."""
 
     md = "# Results Summary\n\n"

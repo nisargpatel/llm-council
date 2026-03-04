@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from backend.config import COUNCIL_MODELS, CHAIRMAN_MODEL, MODEL_METADATA
+from backend.config import COUNCIL_MODELS, CHAIRMAN_MODEL, PROVIDER_PAIRS, MODEL_METADATA
 from backend.openrouter import query_model
 
 # ──────────────────────────────────────────────
@@ -97,7 +97,7 @@ async def run_single_case(case: dict, model: str, condition: str) -> dict:
         "ground_truth": case["ground_truth"],
         "system_prompt": system_prompt,
         "case_prompt": case_prompt,
-        "response": raw["text"] if isinstance(raw, dict) else raw,
+        "response": raw["content"] if isinstance(raw, dict) else raw,
         "input_tokens": raw.get("input_tokens", 0) if isinstance(raw, dict) else 0,
         "output_tokens": raw.get("output_tokens", 0) if isinstance(raw, dict) else 0,
         "latency_ms": latency_ms,
