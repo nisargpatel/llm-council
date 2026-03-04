@@ -1,8 +1,9 @@
 """
-Adversarial Self-Critique Experiment Runner
-Runs each case through two conditions:
+Diagnostic Reflection Experiment Runner
+Runs each case through three conditions:
   - BASELINE: standard diagnostic prompt
-  - ADVERSARIAL: standard prompt → self-critique → revised answer
+  - ADVERSARIAL: standard prompt → one-sided self-critique → revised answer
+  - STRUCTURED: standard prompt → balanced second look → revised answer
 Records all outputs, reasoning traces, latency, and token usage.
 """
 
@@ -23,7 +24,8 @@ from backend.openrouter import query_model
 BASELINE_SYSTEM = """You are an expert physician and diagnostician. You will be presented with a clinical
 case. Provide:
 1. Your differential diagnosis (ranked by probability, top 5)
-2. Your leading diagnosis with confidence level (low/medium/high)
+2. Your leading diagnosis with an estimated probability (0-100%) that this is
+   the correct diagnosis
 3. Your reasoning — explain step by step how you arrived at your differential,
    what findings support or argue against each diagnosis, and why you ranked them
    as you did.
@@ -31,11 +33,12 @@ case. Provide:
 Be thorough in your reasoning. Think through the case systematically."""
 
 ADVERSARIAL_SYSTEM = """You are an expert diagnostician engaged in structured diagnostic
-deliberation. You will work through this case in two phases.
+deliberation. You will work through this case in three phases.
 
 PHASE 1 — INITIAL ASSESSMENT:
 Provide your initial differential diagnosis (top 5, ranked by probability),
-your leading diagnosis, and your reasoning.
+your leading diagnosis with an estimated probability (0-100%) that this is
+the correct diagnosis, and your reasoning.
 
 PHASE 2 — ADVERSARIAL SELF-CRITIQUE:
 Now act as a skeptical second opinion. For your TOP diagnosis:
@@ -47,9 +50,67 @@ Now act as a skeptical second opinion. For your TOP diagnosis:
 PHASE 3 — REVISED ASSESSMENT:
 After completing your self-critique, provide your FINAL differential and leading
 diagnosis. State explicitly whether your self-critique changed your assessment
-and why or why not. Assign a final confidence level (low/medium/high).
+and why or why not. Assign a final estimated probability (0-100%) that your
+leading diagnosis is correct.
 
 Label each phase clearly with headers: ## Phase 1, ## Phase 2, ## Phase 3."""
+
+STRUCTURED_SYSTEM = """You are an expert diagnostician engaged in structured diagnostic
+deliberation. You will work through this case in three phases.
+
+PHASE 1 — INITIAL ASSESSMENT:
+A. PROBLEM REPRESENTATION: First, distill this case into a one-sentence
+   problem representation using semantic qualifiers (e.g., acute vs chronic,
+   inflammatory vs non-inflammatory) and defining features. This should
+   capture the essence of the diagnostic problem.
+B. Provide your initial differential diagnosis (top 5, ranked by probability),
+   your leading diagnosis with an estimated probability (0-100%) that this is
+   the correct diagnosis, and your reasoning.
+
+PHASE 2 — STRUCTURED SECOND LOOK:
+Critically re-examine your initial assessment:
+
+A. PROBLEM REPRESENTATION CHECK:
+- Re-read your problem representation. Does it capture all the defining
+  and discriminating features? Are there key findings you abstracted away
+  that could change the framing?
+- Does your leading diagnosis match the illness script activated by your
+  problem representation, or did you skip from individual findings to a
+  diagnosis without going through the abstraction?
+
+B. STRESS TEST YOUR LEADING DIAGNOSIS:
+- What is the strongest argument AGAINST your top diagnosis?
+- What findings in this case are NOT explained by it?
+
+C. CONSIDER ALTERNATIVES:
+- What is the single best alternative diagnosis, and what specific findings
+  support it over your leading diagnosis?
+- Is there a "can't miss" diagnosis that warrants consideration?
+
+D. DEFEND OR UPDATE:
+- What findings MOST STRONGLY SUPPORT your original leading diagnosis?
+- How does your leading diagnosis compare to the best alternative on
+  overall fit, including base rates and epidemiology?
+- Is the unexplained evidence clinically significant enough to change
+  your ranking, or is it expected noise?
+
+PHASE 3 — REVISED ASSESSMENT:
+After completing your second look, provide your FINAL differential and leading
+diagnosis. State explicitly whether your reassessment changed your diagnosis
+and why or why not. Assign a final estimated probability (0-100%) that your
+leading diagnosis is correct.
+
+Label each phase clearly with headers: ## Phase 1, ## Phase 2, ## Phase 3."""
+
+# Map condition names to system prompts
+CONDITION_PROMPTS = {
+    "baseline": BASELINE_SYSTEM,
+    "adversarial": ADVERSARIAL_SYSTEM,
+    "structured": STRUCTURED_SYSTEM,
+}
+
+CONDITIONS = list(CONDITION_PROMPTS.keys())
+
 
 def build_case_prompt(case: dict) -> str:
     """Format a clinical case for the model."""
@@ -69,7 +130,7 @@ def build_case_prompt(case: dict) -> str:
 async def run_single_case(case: dict, model: str, condition: str) -> dict:
     """Run one case through one model under one condition."""
 
-    system_prompt = BASELINE_SYSTEM if condition == "baseline" else ADVERSARIAL_SYSTEM
+    system_prompt = CONDITION_PROMPTS[condition]
     case_prompt = build_case_prompt(case)
 
     messages = [
@@ -105,17 +166,21 @@ async def run_single_case(case: dict, model: str, condition: str) -> dict:
     }
 
 
-async def run_experiment(cases: list[dict], output_dir: str = "data/experiment") -> None:
-    """Run full experiment: all cases × all models × both conditions."""
+async def run_experiment(cases: list[dict], output_dir: str = "data/experiment",
+                         conditions: list[str] = None) -> None:
+    """Run full experiment: all cases × all models × all conditions."""
+
+    if conditions is None:
+        conditions = CONDITIONS
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     results = []
-    total = len(cases) * len(COUNCIL_MODELS) * 2  # 2 conditions
+    total = len(cases) * len(COUNCIL_MODELS) * len(conditions)
     completed = 0
 
     for case in cases:
         for model in COUNCIL_MODELS:
-            for condition in ["baseline", "adversarial"]:
+            for condition in conditions:
                 try:
                     result = await run_single_case(case, model, condition)
                     results.append(result)
@@ -155,13 +220,21 @@ if __name__ == "__main__":
     import sys
 
     case_file = sys.argv[1] if len(sys.argv) > 1 else "data/cases.json"
+
+    # Optional: specify conditions to run, e.g. "baseline,structured"
+    if len(sys.argv) > 2:
+        conditions = sys.argv[2].split(",")
+    else:
+        conditions = CONDITIONS
+
     with open(case_file) as f:
         cases = json.load(f)
 
-    print(f"Running experiment with {len(cases)} cases × {len(COUNCIL_MODELS)} models × 2 conditions")
-    print(f"Models: {MODEL_METADATA.keys()}")
+    print(f"Running experiment with {len(cases)} cases × {len(COUNCIL_MODELS)} models × {len(conditions)} conditions")
+    print(f"Conditions: {conditions}")
+    print(f"Models: {list(MODEL_METADATA.keys())}")
     print(f"Chairman (eval only): {CHAIRMAN_MODEL}")
-    print(f"Total API calls: {len(cases) * len(COUNCIL_MODELS) * 2}")
+    print(f"Total API calls: {len(cases) * len(COUNCIL_MODELS) * len(conditions)}")
     print(f"Within-provider pairs: {PROVIDER_PAIRS}\n")
 
-    asyncio.run(run_experiment(cases))
+    asyncio.run(run_experiment(cases, conditions=conditions))
