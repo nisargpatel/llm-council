@@ -58,25 +58,57 @@ def parse_adversarial_trace(response: str) -> dict:
 
 
 def extract_leading_diagnosis(response: str) -> Optional[str]:
-    """Extract the leading/top diagnosis from a response."""
+    """Extract the leading/top diagnosis from a response.
+
+    Models format diagnoses in many ways:
+    - GPT-5.1: "### Leading diagnosis and estimated probability\\n**Diagnosis:** X"
+    - GPT-5.2: "**Leading Diagnosis:** X" or header then diagnosis on next line
+    - Sonnet/Opus: "**Leading Diagnosis:** X (confidence%)"
+    - Gemini: "**Final Leading Diagnosis:** **X**"
+
+    Key challenge: models often put "and estimated probability" or "(final)"
+    in the header line, so we must skip label-only lines and find the actual
+    diagnosis name.
+    """
 
     patterns = [
-        # Markdown header followed by diagnosis on next line (GPT-5.1 style)
-        r"#{1,3}\s*(?:final\s*)?(?:leading|top|primary|most likely)\s*diagnosis\s*\n+\s*\*{0,2}([^\n*]+)",
-        # Inline bold label with bold value (Gemini style)
-        r"\*{0,2}(?:final\s*)?(?:leading|top|primary|most likely)\s*diagnosis[:\s]*\*{0,2}\s*\*{0,2}([^\n*]+)",
-        # Plain text label
-        r"(?:final\s*)?(?:leading|top|primary|most likely)\s*diagnosis[:\s]*\*{0,2}([^\n*]+)",
-        # Revised diagnosis
-        r"(?:final|revised)\s*(?:leading)?\s*diagnosis[:\s]*\*{0,2}([^\n*]+)",
-        # First item in numbered list as fallback
-        r"1\.\s*\*{0,2}([^\n*—\-(]+)",
+        # Explicit "Diagnosis:" label (GPT-5.1 uses this below the header)
+        r"\*{0,2}(?:final\s+)?diagnosis[:\s]*\*{0,2}\s*\*{0,2}([A-Z][^\n*%(]+)",
+        # "Leading diagnosis: Actual Diagnosis Name" — diagnosis starts with capital letter
+        r"(?:final\s+)?(?:leading|top|primary|most likely)\s+diagnosis[:\s]+\*{0,2}([A-Z][^\n*%(]+)",
+        # Header line followed by diagnosis on NEXT line starting with capital or bold
+        r"(?:leading|top|primary|most likely)\s+diagnosis[^\n]*\n+\s*\*{0,2}([A-Z][^\n*%(]+)",
+        # "Revised/Final diagnosis: X"
+        r"(?:final|revised)\s+(?:leading\s+)?diagnosis[:\s]+\*{0,2}([A-Z][^\n*%(]+)",
+        # Bold diagnosis after any "diagnosis" label: **Severe Dengue**
+        r"diagnosis[:\s]*\*\*([A-Z][^*\n]+)\*\*",
+        # Numbered list item 1 as fallback — but require capital letter start
+        r"1\.\s*\*{0,2}([A-Z][^\n*—\-(]+)",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, response, re.IGNORECASE)
+        match = re.search(pattern, response, re.IGNORECASE if "(?i)" in pattern else 0)
         if match:
-            return match.group(1).strip().rstrip(".")
+            dx = match.group(1).strip().rstrip(".,;:")
+            # Filter out false positives: skip if it looks like a label/header fragment
+            skip_phrases = [
+                "and estimated", "estimated probability", "(final)",
+                "+ estimated", "with confidence", "and probability",
+                "and reasoning", "with probability",
+            ]
+            if any(phrase in dx.lower() for phrase in skip_phrases):
+                continue
+            if len(dx) < 3 or len(dx) > 200:
+                continue
+            return dx
+
+    # Last resort: look for "most parsimonious diagnosis is **X**" or similar prose
+    prose_match = re.search(
+        r"(?:most (?:likely|parsimonious|probable) (?:diagnosis|explanation) (?:is|remains|:))\s*\*{0,2}([A-Z][^*\n.]+)",
+        response
+    )
+    if prose_match:
+        return prose_match.group(1).strip().rstrip(".,;:")
 
     return None
 
@@ -94,30 +126,38 @@ def extract_confidence(response: str) -> Optional[str]:
 def extract_numeric_confidence(response: str) -> Optional[float]:
     """Extract numeric confidence/probability estimate (0-100%).
 
-    Looks for patterns like:
-    - "estimated probability: 75%"
+    Handles formats like:
+    - "estimated probability: 75%" or "Estimated Probability:** 60%"
     - "probability (0-100%): 80%"
-    - "confidence: 70%"
-    - "65% probability"
-    - "(85%)"
+    - "confidence: 70%" or "confidence level: 65%"
+    - "~50%" or "approximately 50%"
+    - "65% probability" or "75% confident"
+    - "(85%)" near diagnosis context
+    - "ranked #2 (~25%)"
     """
 
     patterns = [
-        # "estimated probability: 75%" or "probability (0-100%): 80%"
-        r"(?:estimated\s+)?probability[^:]*?:\s*(\d{1,3})%",
-        # "confidence: 70%" or "confidence level: 65%"
-        r"confidence[^:]*?:\s*(\d{1,3})%",
+        # "**Estimated Probability:** 60%" or "Estimated probability: ~75%"
+        r"(?:estimated\s+)?probability[^:]*?:\s*~?\s*(\d{1,3})%",
+        # "confidence: 70%" or "confidence level: ~65%"
+        r"confidence[^:]*?:\s*~?\s*(\d{1,3})%",
+        # "~50%" preceded by probability/confidence context within 50 chars
+        r"(?:probability|confidence|estimate)[^.]{0,50}~\s*(\d{1,3})%",
         # "75% confident" or "75% probability" or "75% likely"
         r"(\d{1,3})%\s*(?:confident|probability|likely|chance|certain)",
-        # Standalone percentage near diagnosis context — more targeted
-        r"(?:leading|top|primary|final)\s*diagnosis[^.]*?(\d{1,3})%",
+        # Standalone "estimated probability" with tilde: "~50%"
+        r":\s*~(\d{1,3})%",
+        # Percentage in parentheses near diagnosis: "(45%)" or "(~60%)"
+        r"\(~?\s*(\d{1,3})%\s*\)",
+        # "diagnosis [anything] NN%" — percentage near diagnosis context
+        r"(?:leading|top|primary|final)\s*diagnosis[^.]{0,80}?(\d{1,3})%",
     ]
 
     for pattern in patterns:
         match = re.search(pattern, response, re.IGNORECASE)
         if match:
             val = float(match.group(1))
-            if 0 <= val <= 100:
+            if 0 < val <= 100:  # exclude 0% as likely not a real confidence
                 return val
 
     return None

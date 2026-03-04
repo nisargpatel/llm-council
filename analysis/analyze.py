@@ -1,7 +1,7 @@
 """
 Statistical analysis for diagnostic reflection experiment.
 Compares three conditions: baseline, adversarial self-critique, structured reflection.
-Outputs tables and figures.
+Outputs tables and figures for CPH poster and AMIA submission.
 
 Key analyses:
 1. Primary: McNemar's test for each reflection condition vs baseline
@@ -12,6 +12,7 @@ Key analyses:
 """
 
 import json
+import re
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -77,7 +78,36 @@ def score_accuracy(row: pd.Series) -> dict:
         if not extracted:
             return False
         e, t = extracted.lower().strip(), truth.lower().strip()
-        return t in e or e in t
+        # Direct substring match
+        if t in e or e in t:
+            return True
+        # Word-level overlap: check if key words from ground truth appear in extraction
+        # Split on spaces and common delimiters
+        truth_words = set(re.sub(r'[^a-z\s]', '', t).split())
+        extracted_words = set(re.sub(r'[^a-z\s]', '', e).split())
+        # Remove common stopwords
+        stopwords = {'the', 'a', 'an', 'of', 'with', 'and', 'or', 'in', 'to', 'by',
+                     'from', 'for', 'on', 'is', 'are', 'was', 'were', 'disease',
+                     'syndrome', 'disorder', 'acute', 'chronic', 'severe', 'infection'}
+        truth_key = truth_words - stopwords
+        extracted_key = extracted_words - stopwords
+        # If most key ground truth words appear in the extraction, it's a match
+        if truth_key and len(truth_key & extracted_key) / len(truth_key) >= 0.5:
+            return True
+        # Handle common synonym pairs
+        synonyms = {
+            'meningococcemia': ['meningococcal', 'neisseria meningitidis'],
+            'meningococcal': ['meningococcemia'],
+            'lyme': ['borrelia', 'borreliosis'],
+            'carditis': ['myocarditis', 'cardiac', 'heart block', 'av block'],
+            'dengue': ['dengue hemorrhagic', 'dengue shock'],
+            'disseminated': ['systemic', 'septic', 'bacteremia'],
+        }
+        for word in truth_key:
+            for syn in synonyms.get(word, []):
+                if syn in e:
+                    return True
+        return False
 
     top1 = matches(leading, gt) if leading else False
     top3 = any(matches(d, gt) for d in differential[:3])
@@ -614,7 +644,7 @@ def generate_summary_tables(primary: dict, secondary: dict, df: pd.DataFrame,
                             confidence: dict = None, coherence: dict = None,
                             anchoring: dict = None, within_provider: dict = None,
                             capability: dict = None) -> str:
-    """Generate markdown summary tables."""
+    """Generate markdown summary tables for poster/paper."""
 
     conditions = sorted(df["condition"].unique())
     md = "# Results Summary\n\n"
