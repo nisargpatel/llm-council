@@ -43,9 +43,13 @@ async def query_model(
             data = response.json()
             message = data['choices'][0]['message']
 
+            usage = data.get('usage', {})
             return {
                 'content': message.get('content'),
-                'reasoning_details': message.get('reasoning_details')
+                'reasoning_details': message.get('reasoning_details'),
+                'input_tokens': usage.get('prompt_tokens', 0),
+                'output_tokens': usage.get('completion_tokens', 0),
+                'model_used': data.get('model', model),
             }
 
     except Exception as e:

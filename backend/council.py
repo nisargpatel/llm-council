@@ -61,7 +61,7 @@ async def stage2_collect_rankings(
         for label, result in zip(labels, stage1_results)
     ])
 
-    ranking_prompt = f"""You are evaluating different responses to the following question:
+    ranking_prompt = f"""From the perspective of an expert academic physician, diagnostician, and clinical researcher with strong knowledge in statistics, evaluate different responses to the following question:
 
 Question: {user_query}
 
@@ -139,7 +139,7 @@ async def stage3_synthesize_final(
         for result in stage2_results
     ])
 
-    chairman_prompt = f"""You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
+    chairman_prompt = f"""You are the Chairman of an LLM Council and have a background in academic medicine, statistics, and clinical research. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
 
 Original Question: {user_query}
 
