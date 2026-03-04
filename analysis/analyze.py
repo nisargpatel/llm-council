@@ -9,8 +9,6 @@ import numpy as np
 from scipy import stats
 from pathlib import Path
 import warnings
-from backend.config import MODEL_METADATA, PROVIDER_PAIRS
-
 
 # For the capability-scaling correlation
 from scipy.stats import spearmanr, pearsonr
@@ -18,6 +16,7 @@ from scipy.stats import spearmanr, pearsonr
 # Append parents for imports 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from backend.config import MODEL_METADATA, PROVIDER_PAIRS
 from backend.trace_parser import (
     parse_adversarial_trace,
     extract_leading_diagnosis,
