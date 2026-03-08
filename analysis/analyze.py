@@ -1,7 +1,7 @@
 """
 Statistical analysis for diagnostic reflection experiment.
 Compares three conditions: baseline, adversarial self-critique, structured reflection.
-Outputs tables and figures for CPH poster and AMIA submission.
+Outputs tables and figures.
 
 Key analyses:
 1. Primary: McNemar's test for each reflection condition vs baseline
@@ -44,8 +44,14 @@ def load_results(path: str) -> pd.DataFrame:
     return pd.DataFrame(results)
 
 
-def score_accuracy(row: pd.Series) -> dict:
+def score_accuracy(row: pd.Series, nlp_extractions: dict = None) -> dict:
     """Score a single result against ground truth.
+
+    Args:
+        row: DataFrame row with response, condition, ground_truth, case_id, model
+        nlp_extractions: Optional dict keyed by (case_id, model, condition) with
+            NLP-extracted diagnoses from backend.diagnosis_extractor. When provided,
+            uses these instead of regex extraction.
 
     Returns:
         top1_correct: bool - leading diagnosis matches ground truth
@@ -56,22 +62,39 @@ def score_accuracy(row: pd.Series) -> dict:
     gt = row["ground_truth"].lower().strip()
     response = row["response"]
 
-    # For reflection conditions, use Phase 3 (revised) diagnosis
-    if row["condition"] in ("adversarial", "structured"):
-        parsed = parse_adversarial_trace(response)
-        final_text = parsed.get("phase3", response)
-    else:
-        final_text = response
+    # Check for NLP extraction
+    nlp_key = (row["case_id"], row["model"], row["condition"])
+    nlp = nlp_extractions.get(nlp_key) if nlp_extractions else None
 
-    leading = extract_leading_diagnosis(final_text)
-    differential = extract_differential(final_text)
-    confidence = extract_numeric_confidence(final_text)
+    if nlp and "error" not in nlp:
+        # Use NLP-extracted data
+        leading = nlp.get("leading_diagnosis")
+        differential = nlp.get("differential_top5", [])
+        confidence = nlp.get("numeric_confidence")
+        if confidence is not None:
+            confidence = float(confidence)
+    else:
+        # Fallback to regex extraction
+        if row["condition"] in ("adversarial", "structured"):
+            parsed = parse_adversarial_trace(response)
+            final_text = parsed.get("phase3", response)
+        else:
+            final_text = response
+
+        leading = extract_leading_diagnosis(final_text)
+        differential = extract_differential(final_text)
+        confidence = extract_numeric_confidence(final_text)
 
     # Also extract Phase 1 confidence for reflection conditions
     phase1_confidence = None
     if row["condition"] in ("adversarial", "structured"):
-        parsed = parse_adversarial_trace(response)
-        phase1_confidence = extract_numeric_confidence(parsed.get("phase1", ""))
+        # Prefer NLP extraction for Phase 1 confidence
+        if nlp and "error" not in nlp and nlp.get("phase1_confidence") is not None:
+            phase1_confidence = float(nlp["phase1_confidence"])
+        else:
+            # Fallback to regex
+            parsed = parse_adversarial_trace(response)
+            phase1_confidence = extract_numeric_confidence(parsed.get("phase1", ""))
 
     # Fuzzy matching — ground truth substring in extracted diagnosis
     def matches(extracted: str, truth: str) -> bool:
@@ -82,7 +105,6 @@ def score_accuracy(row: pd.Series) -> dict:
         if t in e or e in t:
             return True
         # Word-level overlap: check if key words from ground truth appear in extraction
-        # Split on spaces and common delimiters
         truth_words = set(re.sub(r'[^a-z\s]', '', t).split())
         extracted_words = set(re.sub(r'[^a-z\s]', '', e).split())
         # Remove common stopwords
@@ -133,8 +155,18 @@ def primary_analysis(df: pd.DataFrame) -> dict:
     - Per-model breakdowns
     """
 
+    # Load NLP extractions if available
+    nlp_extractions = None
+    nlp_path = Path("data/experiment/extracted_diagnoses.jsonl")
+    if nlp_path.exists():
+        from backend.diagnosis_extractor import load_extractions
+        nlp_extractions = load_extractions(str(nlp_path))
+        print(f"Loaded {len(nlp_extractions)} NLP extractions")
+    else:
+        print("No NLP extractions found — using regex fallback")
+
     # Score all results
-    scores = df.apply(score_accuracy, axis=1, result_type="expand")
+    scores = df.apply(lambda row: score_accuracy(row, nlp_extractions), axis=1, result_type="expand")
     df = pd.concat([df, scores], axis=1)
 
     results = {}

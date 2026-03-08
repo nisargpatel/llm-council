@@ -24,11 +24,14 @@ from backend.openrouter import query_model
 BASELINE_SYSTEM = """You are an expert physician and diagnostician. You will be presented with a clinical
 case. Provide:
 1. Your differential diagnosis (ranked by probability, top 5)
-2. Your leading diagnosis with an estimated probability (0-100%) that this is
-   the correct diagnosis
+2. Your leading diagnosis with your reasoning
 3. Your reasoning — explain step by step how you arrived at your differential,
    what findings support or argue against each diagnosis, and why you ranked them
    as you did.
+
+End your response with exactly this format:
+**Leading Diagnosis:** [diagnosis name]
+**Estimated Probability:** [X]%
 
 Be thorough in your reasoning. Think through the case systematically."""
 
@@ -50,8 +53,11 @@ Now act as a skeptical second opinion. For your TOP diagnosis:
 PHASE 3 — REVISED ASSESSMENT:
 After completing your self-critique, provide your FINAL differential and leading
 diagnosis. State explicitly whether your self-critique changed your assessment
-and why or why not. Assign a final estimated probability (0-100%) that your
-leading diagnosis is correct.
+and why or why not.
+
+End Phase 3 with exactly this format:
+**Final Leading Diagnosis:** [diagnosis name]
+**Final Probability:** [X]%
 
 Label each phase clearly with headers: ## Phase 1, ## Phase 2, ## Phase 3."""
 
@@ -97,8 +103,11 @@ D. DEFEND OR UPDATE:
 PHASE 3 — REVISED ASSESSMENT:
 After completing your second look, provide your FINAL differential and leading
 diagnosis. State explicitly whether your reassessment changed your diagnosis
-and why or why not. Assign a final estimated probability (0-100%) that your
-leading diagnosis is correct.
+and why or why not.
+
+End Phase 3 with exactly this format:
+**Final Leading Diagnosis:** [diagnosis name]
+**Final Probability:** [X]%
 
 Label each phase clearly with headers: ## Phase 1, ## Phase 2, ## Phase 3."""
 

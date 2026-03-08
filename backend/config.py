@@ -9,7 +9,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 # ── COUNCIL MODELS (test subjects) ──
 COUNCIL_MODELS = [
-    "openai/gpt-5.1",
+    "openai/gpt-5.4",
     "openai/gpt-5.2",
     "anthropic/claude-sonnet-4.5",
     "anthropic/claude-opus-4.5",
@@ -21,19 +21,19 @@ CHAIRMAN_MODEL = "anthropic/claude-opus-4.6"
 
 # ── MODEL METADATA (for analysis) ──
 MODEL_METADATA = {
-    "openai/gpt-5.1": {
+    "openai/gpt-5.4": {
         "provider": "openai",
-        "tier": "standard",
+        "tier": "frontier",
         "family": "gpt-5",
-        "capability_rank": 2,       # 1=lowest in study, 5=highest
+        "capability_rank": 5,       # 1=lowest in study, 5=highest
         "pair_with": "openai/gpt-5.2",
     },
     "openai/gpt-5.2": {
         "provider": "openai",
-        "tier": "frontier",
+        "tier": "standard",
         "family": "gpt-5",
-        "capability_rank": 4,
-        "pair_with": "openai/gpt-5.1",
+        "capability_rank": 2,
+        "pair_with": "openai/gpt-5.4",
     },
     "anthropic/claude-sonnet-4.5": {
         "provider": "anthropic",
@@ -46,12 +46,12 @@ MODEL_METADATA = {
         "provider": "anthropic",
         "tier": "frontier",
         "family": "claude-4",
-        "capability_rank": 5,
+        "capability_rank": 4,
         "pair_with": "anthropic/claude-sonnet-4.5",
     },
     "google/gemini-3-pro-preview": {
         "provider": "google",
-        "tier": "flagship",
+        "tier": "frontier",
         "family": "gemini-3",
         "capability_rank": 3,
         "pair_with": None,          # no within-provider pair
@@ -62,8 +62,8 @@ MODEL_METADATA = {
 PROVIDER_PAIRS = [
     {
         "provider": "OpenAI",
-        "standard": "openai/gpt-5.1",
-        "frontier": "openai/gpt-5.2",
+        "standard": "openai/gpt-5.2",
+        "frontier": "openai/gpt-5.4",
     },
     {
         "provider": "Anthropic",

@@ -61,7 +61,7 @@ def extract_leading_diagnosis(response: str) -> Optional[str]:
     """Extract the leading/top diagnosis from a response.
 
     Models format diagnoses in many ways:
-    - GPT-5.1: "### Leading diagnosis and estimated probability\\n**Diagnosis:** X"
+    - GPT-5.4: "### Leading diagnosis and estimated probability\\n**Diagnosis:** X"
     - GPT-5.2: "**Leading Diagnosis:** X" or header then diagnosis on next line
     - Sonnet/Opus: "**Leading Diagnosis:** X (confidence%)"
     - Gemini: "**Final Leading Diagnosis:** **X**"
