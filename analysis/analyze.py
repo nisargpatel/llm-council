@@ -347,6 +347,9 @@ def score_accuracy(row: pd.Series, nlp_extractions: dict = None) -> dict:
             return True
 
         # Check synonym map: if ground truth has known synonyms, check each
+        # We check ALL matching canonical entries (not just the first) because
+        # a ground truth like "sarcoidosis (lofgren's syndrome)" could match
+        # both the "sarcoidosis" entry and the more specific Lofgren entry.
         for canonical, syns in DIAGNOSIS_SYNONYMS.items():
             # Does this ground truth match this canonical entry?
             if t == canonical or t in canonical or canonical in t:
@@ -356,7 +359,7 @@ def score_accuracy(row: pd.Series, nlp_extractions: dict = None) -> dict:
                 # Also check if extraction matches the canonical
                 if canonical in e or e in canonical:
                     return True
-                break  # Found the right canonical entry, stop searching
+                # Don't break — keep checking other canonical entries
 
         # Also check reverse: maybe the extraction IS a canonical and truth is a synonym
         for canonical, syns in DIAGNOSIS_SYNONYMS.items():
