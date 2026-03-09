@@ -1,7 +1,7 @@
 """
 Statistical analysis for diagnostic reflection experiment.
 Compares three conditions: baseline, adversarial self-critique, structured reflection.
-Outputs tables and figures for CPH poster and AMIA submission.
+Outputs tables and figures.
 
 Key analyses:
 1. Primary: McNemar's test for each reflection condition vs baseline
@@ -97,6 +97,247 @@ def score_accuracy(row: pd.Series, nlp_extractions: dict = None) -> dict:
             phase1_confidence = extract_numeric_confidence(parsed.get("phase1", ""))
 
     # Fuzzy matching — ground truth substring in extracted diagnosis
+    # Comprehensive synonym map for all 48 NEJM CPC ground truth diagnoses.
+    # Each key is a canonical ground truth (lowercased), and the value is a list
+    # of alternative phrasings a model might use. Matching is bidirectional.
+    DIAGNOSIS_SYNONYMS = {
+        # --- Easy cases ---
+        "post-traumatic stress disorder": [
+            "ptsd", "post traumatic stress", "posttraumatic stress",
+        ],
+        "necrotizing fasciitis and toxic shock syndrome": [
+            "necrotizing fasciitis", "nec fasc", "necrotising fasciitis",
+            "flesh-eating", "group a strep toxic shock", "streptococcal toxic shock",
+            "toxic shock syndrome",
+        ],
+        "necrotizing fasciitis": [
+            "nec fasc", "necrotising fasciitis", "flesh-eating",
+            "necrotizing soft tissue infection", "nsti",
+        ],
+        "invasive neisseria meningitidis infection": [
+            "meningococcemia", "meningococcal sepsis", "meningococcal disease",
+            "neisseria meningitidis", "meningococcal infection",
+            "disseminated meningococcal", "meningococcal bacteremia",
+        ],
+        "meningoencephalitis due to neisseria meningitidis infection": [
+            "meningococcal meningitis", "meningococcal meningoencephalitis",
+            "neisseria meningitidis meningitis", "meningococcemia with meningitis",
+            "meningococcal disease", "meningococcal infection",
+        ],
+        "aortic dissection": [
+            "dissection of the aorta", "acute aortic dissection",
+            "type a aortic dissection", "type b aortic dissection",
+            "stanford type a", "stanford type b", "debakey",
+        ],
+        "primary varicella-zoster virus infection": [
+            "varicella", "chickenpox", "vzv infection", "primary vzv",
+            "varicella zoster", "primary varicella",
+        ],
+        "cardiac arrest due to pulmonary embolism": [
+            "massive pulmonary embolism", "pulmonary embolism with cardiac arrest",
+            "pe with cardiac arrest", "fatal pulmonary embolism",
+            "pulmonary embolism", "pe",
+        ],
+        "secondary syphilis": [
+            "syphilis", "treponema pallidum", "secondary lues",
+        ],
+        "glucose-6-phosphate dehydrogenase deficiency": [
+            "g6pd deficiency", "g6pd", "glucose 6 phosphate dehydrogenase",
+            "favism",
+        ],
+        "hypertrophic cardiomyopathy": [
+            "hcm", "hocm", "hypertrophic obstructive cardiomyopathy",
+            "idiopathic hypertrophic subaortic stenosis", "ihss",
+            "asymmetric septal hypertrophy",
+        ],
+        "acute massive pulmonary embolism": [
+            "massive pe", "pulmonary embolism", "acute pulmonary embolism",
+            "saddle embolus", "saddle pe",
+        ],
+        "sarcoidosis": [
+            "pulmonary sarcoidosis", "systemic sarcoidosis", "sarcoid",
+            "non-caseating granulomas", "noncaseating granulomatous disease",
+        ],
+        "giant-cell aortitis with descending aortic dissection and rupture": [
+            "giant cell aortitis", "giant cell arteritis", "temporal arteritis",
+            "giant-cell arteritis with aortitis", "gca with aortitis",
+            "aortitis", "large vessel vasculitis",
+        ],
+        "hypothermia with frostbite": [
+            "hypothermia", "frostbite", "accidental hypothermia",
+            "environmental hypothermia",
+        ],
+        # --- Original pilot cases (first two in dataset) ---
+        "disseminated meningococcal disease": [
+            "meningococcemia", "meningococcal sepsis", "meningococcal bacteremia",
+            "neisseria meningitidis", "invasive meningococcal disease",
+            "meningococcal infection", "meningococcal septicemia",
+        ],
+        "lyme carditis": [
+            "cardiac lyme disease", "lyme disease with heart block",
+            "borrelia carditis", "lyme heart block", "lyme myocarditis",
+            "borrelia burgdorferi carditis", "lyme disease with av block",
+            "lyme disease with cardiac involvement",
+        ],
+        # --- Moderate cases ---
+        "crohn's disease": [
+            "crohn disease", "crohns disease", "regional enteritis",
+            "inflammatory bowel disease", "granulomatous ileitis",
+            "terminal ileitis",
+        ],
+        "graves' disease with thyrotoxic periodic paralysis": [
+            "graves disease", "thyrotoxic periodic paralysis", "tpp",
+            "hypokalemic periodic paralysis", "graves thyrotoxicosis",
+            "thyrotoxicosis with periodic paralysis",
+        ],
+        "sarcoidosis (lofgren's syndrome)": [
+            "lofgren syndrome", "löfgren syndrome", "lofgren's",
+            "sarcoidosis", "sarcoid", "acute sarcoidosis",
+            "bilateral hilar lymphadenopathy with erythema nodosum",
+        ],
+        "pernicious anemia (vitamin b12 deficiency)": [
+            "pernicious anemia", "pernicious anaemia", "vitamin b12 deficiency",
+            "b12 deficiency", "cobalamin deficiency", "megaloblastic anemia",
+            "subacute combined degeneration",
+        ],
+        "euglycemic diabetic ketoacidosis due to sglt2 inhibitor use": [
+            "euglycemic dka", "sglt2 inhibitor dka", "sglt2 associated dka",
+            "euglycemic diabetic ketoacidosis", "normoglycemic dka",
+            "empagliflozin dka", "dapagliflozin dka", "canagliflozin dka",
+        ],
+        "idiopathic pulmonary fibrosis": [
+            "ipf", "usual interstitial pneumonia", "uip",
+            "pulmonary fibrosis", "cryptogenic fibrosing alveolitis",
+        ],
+        "myelodysplastic syndrome": [
+            "mds", "myelodysplasia", "refractory anemia",
+            "refractory cytopenia",
+        ],
+        "glutamic acid decarboxylase 65 autoantibody-associated stiff-person syndrome": [
+            "stiff person syndrome", "stiff-person syndrome", "sps",
+            "stiff man syndrome", "gad65 antibody syndrome",
+            "anti-gad antibody stiff person", "gad antibody",
+        ],
+        "acute hepatitis b virus and hepatitis delta virus coinfection": [
+            "hepatitis b and d coinfection", "hbv hdv coinfection",
+            "hepatitis delta", "hepatitis b with delta",
+            "hbv-hdv", "hepatitis b and hepatitis d",
+        ],
+        "systemic lupus erythematosus": [
+            "sle", "lupus", "systemic lupus",
+        ],
+        "granulomatosis with polyangiitis": [
+            "gpa", "wegener's granulomatosis", "wegener granulomatosis",
+            "wegeners", "anca vasculitis", "c-anca vasculitis",
+            "pr3-anca vasculitis",
+        ],
+        "metformin-associated lactic acidosis": [
+            "mala", "metformin lactic acidosis", "metformin toxicity",
+            "metformin-induced lactic acidosis",
+        ],
+        "hereditary hemochromatosis": [
+            "hemochromatosis", "haemochromatosis", "iron overload",
+            "hfe hemochromatosis", "hereditary haemochromatosis",
+            "bronze diabetes",
+        ],
+        "hiv type 2 infection and cerebral toxoplasmosis": [
+            "hiv-2 with toxoplasmosis", "hiv type 2", "hiv-2",
+            "cerebral toxoplasmosis", "toxoplasma encephalitis",
+            "cns toxoplasmosis",
+        ],
+        "babesiosis and lyme disease co-infection": [
+            "babesiosis", "babesia", "lyme disease", "borrelia",
+            "babesia and borrelia", "tick-borne coinfection",
+        ],
+        "icteric leptospirosis (weil's disease)": [
+            "weil disease", "weil's disease", "weils disease",
+            "leptospirosis", "icteric leptospirosis",
+            "leptospira", "severe leptospirosis",
+        ],
+        "iga vasculitis": [
+            "henoch-schonlein purpura", "henoch schonlein purpura",
+            "hsp", "iga vasculitis", "henoch-schönlein",
+            "immunoglobulin a vasculitis", "anaphylactoid purpura",
+        ],
+        "autoimmune hemolytic anemia and thrombocytopenia (evans syndrome) due to systemic lupus erythematosus": [
+            "evans syndrome", "evan's syndrome", "aiha with itp",
+            "autoimmune hemolytic anemia", "evans syndrome with sle",
+            "lupus with evans syndrome", "sle with evans syndrome",
+        ],
+        "autoimmune hepatitis": [
+            "aih", "autoimmune liver disease",
+            "type 1 autoimmune hepatitis", "type 2 autoimmune hepatitis",
+        ],
+        # --- Hard cases ---
+        "chronic salicylate toxicity": [
+            "salicylate poisoning", "aspirin toxicity", "aspirin poisoning",
+            "chronic aspirin toxicity", "salicylism",
+            "salicylate intoxication",
+        ],
+        "disseminated infection with hypervirulent klebsiella pneumoniae": [
+            "hypervirulent klebsiella", "klebsiella pneumoniae liver abscess",
+            "invasive klebsiella", "disseminated klebsiella",
+            "klebsiella pneumoniae infection",
+            "pyogenic liver abscess with klebsiella",
+        ],
+        "systemic primary amyloidosis": [
+            "al amyloidosis", "primary amyloidosis", "systemic amyloidosis",
+            "light chain amyloidosis", "immunoglobulin light chain amyloidosis",
+        ],
+        "thromboembolic renal infarction due to endocarditis": [
+            "renal infarction", "septic embolism to kidney",
+            "endocarditis with renal infarction", "infective endocarditis",
+            "endocarditis with emboli",
+        ],
+        "reninoma": [
+            "juxtaglomerular cell tumor", "jg cell tumor",
+            "renin-secreting tumor", "reninoma",
+        ],
+        "myeloperoxidase antineutrophil cytoplasmic antibody-associated vasculitis": [
+            "mpo-anca vasculitis", "p-anca vasculitis",
+            "microscopic polyangiitis", "mpa",
+            "anca-associated vasculitis", "anca vasculitis",
+            "mpo anca", "pauci-immune vasculitis",
+        ],
+        "periprosthetic joint infection with mycobacterium bovis bacille calmette-guerin": [
+            "bcg prosthetic joint infection", "bcg infection",
+            "mycobacterium bovis infection", "periprosthetic joint infection",
+            "prosthetic joint infection", "bcg arthritis",
+            "mycobacterial prosthetic infection",
+        ],
+        "ocular syphilis": [
+            "syphilitic uveitis", "syphilitic eye disease",
+            "ophthalmic syphilis", "syphilis with ocular involvement",
+            "treponema pallidum ocular", "neurosyphilis with ocular",
+        ],
+        "aspiration pneumonia": [
+            "aspiration pneumonitis", "aspiration lung injury",
+        ],
+        "disseminated strongyloidiasis": [
+            "strongyloides hyperinfection", "hyperinfection syndrome",
+            "strongyloides stercoralis", "disseminated strongyloides",
+            "strongyloidiasis",
+        ],
+        "postpartum coronary-artery dissection": [
+            "spontaneous coronary artery dissection", "scad",
+            "coronary dissection", "postpartum scad",
+            "peripartum coronary dissection",
+        ],
+        "limb-shaking transient ischemic attacks": [
+            "limb shaking tia", "limb-shaking tia",
+            "hemodynamic tia", "carotid stenosis with limb shaking",
+        ],
+        "trichobezoar": [
+            "hair bezoar", "rapunzel syndrome", "gastric bezoar",
+            "bezoar",
+        ],
+        "chorea due to antiphospholipid syndrome and underlying systemic lupus erythematosus": [
+            "antiphospholipid syndrome chorea", "aps chorea",
+            "lupus chorea", "sle with chorea",
+            "antiphospholipid syndrome", "chorea with aps",
+        ],
+    }
+
     def matches(extracted: str, truth: str) -> bool:
         if not extracted:
             return False
@@ -104,31 +345,39 @@ def score_accuracy(row: pd.Series, nlp_extractions: dict = None) -> dict:
         # Direct substring match
         if t in e or e in t:
             return True
+
+        # Check synonym map: if ground truth has known synonyms, check each
+        for canonical, syns in DIAGNOSIS_SYNONYMS.items():
+            # Does this ground truth match this canonical entry?
+            if t == canonical or t in canonical or canonical in t:
+                for syn in syns:
+                    if syn in e or e in syn:
+                        return True
+                # Also check if extraction matches the canonical
+                if canonical in e or e in canonical:
+                    return True
+                break  # Found the right canonical entry, stop searching
+
+        # Also check reverse: maybe the extraction IS a canonical and truth is a synonym
+        for canonical, syns in DIAGNOSIS_SYNONYMS.items():
+            if canonical in e or e in canonical:
+                if t in syns or any(s in t or t in s for s in syns):
+                    return True
+
         # Word-level overlap: check if key words from ground truth appear in extraction
         truth_words = set(re.sub(r'[^a-z\s]', '', t).split())
         extracted_words = set(re.sub(r'[^a-z\s]', '', e).split())
         # Remove common stopwords
         stopwords = {'the', 'a', 'an', 'of', 'with', 'and', 'or', 'in', 'to', 'by',
                      'from', 'for', 'on', 'is', 'are', 'was', 'were', 'disease',
-                     'syndrome', 'disorder', 'acute', 'chronic', 'severe', 'infection'}
+                     'syndrome', 'disorder', 'acute', 'chronic', 'severe', 'infection',
+                     'due', 'associated', 'type', 'primary', 'secondary'}
         truth_key = truth_words - stopwords
         extracted_key = extracted_words - stopwords
         # If most key ground truth words appear in the extraction, it's a match
-        if truth_key and len(truth_key & extracted_key) / len(truth_key) >= 0.5:
+        if truth_key and len(truth_key) >= 2 and len(truth_key & extracted_key) / len(truth_key) >= 0.6:
             return True
-        # Handle common synonym pairs
-        synonyms = {
-            'meningococcemia': ['meningococcal', 'neisseria meningitidis'],
-            'meningococcal': ['meningococcemia'],
-            'lyme': ['borrelia', 'borreliosis'],
-            'carditis': ['myocarditis', 'cardiac', 'heart block', 'av block'],
-            'dengue': ['dengue hemorrhagic', 'dengue shock'],
-            'disseminated': ['systemic', 'septic', 'bacteremia'],
-        }
-        for word in truth_key:
-            for syn in synonyms.get(word, []):
-                if syn in e:
-                    return True
+
         return False
 
     top1 = matches(leading, gt) if leading else False
@@ -267,9 +516,64 @@ def primary_analysis(df: pd.DataFrame) -> dict:
     else:
         print("No NLP extractions found — using regex fallback")
 
-    # Score all results
+    # Score all results using fuzzy matching (fallback layer)
     scores = df.apply(lambda row: score_accuracy(row, nlp_extractions), axis=1, result_type="expand")
     df = pd.concat([df, scores], axis=1)
+
+    # Load chairman scores if available — these are the authoritative accuracy source
+    chairman_path = Path("data/experiment/chairman_scores.jsonl")
+    if chairman_path.exists():
+        chairman_scores = []
+        with open(chairman_path) as f:
+            for line in f:
+                if line.strip():
+                    chairman_scores.append(json.loads(line))
+        ch_df = pd.DataFrame(chairman_scores)
+        if len(ch_df) > 0 and "chairman_top1" in ch_df.columns:
+            # Merge chairman scores onto main DataFrame
+            ch_merge = ch_df[["case_id", "model", "condition",
+                              "chairman_top1", "chairman_top3", "chairman_top5"]].copy()
+            ch_merge = ch_merge.dropna(subset=["chairman_top1"])
+            df = df.merge(ch_merge, on=["case_id", "model", "condition"], how="left")
+
+            # Use chairman scores where available, fall back to fuzzy matching
+            n_chairman = df["chairman_top1"].notna().sum()
+            n_total = len(df)
+            print(f"Chairman scores loaded: {n_chairman}/{n_total} results scored by chairman")
+
+            for metric in ["top1_correct", "top3_correct", "top5_correct"]:
+                chairman_col = metric.replace("correct", "").replace("_", "") 
+                chairman_col = f"chairman_{metric.split('_')[0]}_{metric.split('_')[1]}"
+                # Map: top1_correct -> chairman_top1, etc.
+                ch_col = f"chairman_{metric.replace('_correct', '').replace('_', '')}"
+                if ch_col not in df.columns:
+                    # Try alternate naming: chairman_top1, chairman_top3, chairman_top5
+                    ch_col = f"chairman_{''.join(metric.split('_')[:2])}"
+                # Direct mapping
+                ch_map = {"top1_correct": "chairman_top1",
+                          "top3_correct": "chairman_top3",
+                          "top5_correct": "chairman_top5"}
+                ch_col = ch_map.get(metric)
+                if ch_col and ch_col in df.columns:
+                    mask = df[ch_col].notna()
+                    df.loc[mask, metric] = df.loc[mask, ch_col].astype(bool)
+
+            # Report agreement between fuzzy matching and chairman
+            if "chairman_top1" in df.columns:
+                both = df[df["chairman_top1"].notna()].copy()
+                if len(both) > 0:
+                    fuzzy_col = scores["top1_correct"]
+                    # Re-extract fuzzy scores for comparison
+                    agreement_mask = both.index.isin(scores.index)
+                    if agreement_mask.any():
+                        fuzzy_vals = scores.loc[both.index, "top1_correct"]
+                        chairman_vals = both["chairman_top1"].astype(bool)
+                        agree = (fuzzy_vals == chairman_vals).mean()
+                        print(f"Fuzzy vs Chairman agreement: {agree:.1%}")
+        else:
+            print("Chairman scores file found but empty or malformed")
+    else:
+        print("No chairman scores found — using fuzzy matching only")
 
     results = {}
     conditions = df["condition"].unique()
