@@ -340,7 +340,7 @@ def figure_capability_scaling(df: pd.DataFrame, output_path: str = "data/analysi
     """Dot plot: models ordered by capability on x-axis, reflection delta on y-axis.
 
     Shows adversarial delta and structured delta for each model, with brackets
-    connecting within-provider pairs (e.g., GPT-5.2 ↔ GPT-5.4).
+    connecting within-provider pairs (e.g., GPT-5.1 ↔ GPT-5.2).
     """
 
     # Compute per-model accuracy by condition
@@ -937,8 +937,31 @@ def compute_calibration_metrics(df: pd.DataFrame) -> dict:
                 bin_conf = conf[in_bin].mean()
                 mce = max(mce, abs(bin_acc - bin_conf))
 
+        # Brier score decomposition: reliability, resolution, uncertainty
+        # Following Murphy (1973) decomposition:
+        #   Brier = Reliability - Resolution + Uncertainty
+        #   Reliability = (1/N) Σ_k n_k (f_k - o_k)^2  (calibration error)
+        #   Resolution  = (1/N) Σ_k n_k (o_k - o_bar)^2 (discrimination)
+        #   Uncertainty = o_bar * (1 - o_bar)            (base rate variance)
+        o_bar = correct.mean()  # overall base rate
+        uncertainty = o_bar * (1 - o_bar)
+
+        reliability = 0.0
+        resolution = 0.0
+        for i in range(n_bins):
+            in_bin = (conf >= bin_boundaries[i]) & (conf < bin_boundaries[i + 1])
+            n_k = in_bin.sum()
+            if n_k > 0:
+                f_k = conf[in_bin].mean()       # mean forecast in bin
+                o_k = correct[in_bin].mean()     # observed frequency in bin
+                reliability += (n_k / len(conf)) * (f_k - o_k) ** 2
+                resolution += (n_k / len(conf)) * (o_k - o_bar) ** 2
+
         results[cond] = {
             "brier_score": float(brier),
+            "brier_reliability": round(float(reliability), 5),
+            "brier_resolution": round(float(resolution), 5),
+            "brier_uncertainty": round(float(uncertainty), 5),
             "ece": float(ece),
             "mce": float(mce),
             "n": len(subset),
@@ -1022,7 +1045,11 @@ if __name__ == "__main__":
     cal_metrics = compute_calibration_metrics(df)
     print(f"\nCalibration metrics:")
     for cond, metrics in cal_metrics.items():
-        print(f"  {cond}: Brier={metrics['brier_score']:.4f}, ECE={metrics['ece']:.4f}, MCE={metrics['mce']:.4f}")
+        print(f"  {cond}: Brier={metrics['brier_score']:.4f} "
+              f"(Rel={metrics['brier_reliability']:.4f}, "
+              f"Res={metrics['brier_resolution']:.4f}, "
+              f"Unc={metrics['brier_uncertainty']:.4f}), "
+              f"ECE={metrics['ece']:.4f}, MCE={metrics['mce']:.4f}")
 
     with open(output_dir / "calibration_metrics.json", "w") as f:
         json.dump(cal_metrics, f, indent=2)

@@ -138,9 +138,9 @@ def extract_numeric_confidence(response: str) -> Optional[float]:
 
     patterns = [
         # "**Estimated Probability:** 60%" or "Estimated probability: ~75%"
-        r"(?:estimated\s+)?probability[^:]*?:\s*~?\s*(\d{1,3})%",
+        r"(?:estimated\s+)?probability[^:]*?:\s*\*{0,2}\s*~?\s*\*{0,2}(\d{1,3})%",
         # "confidence: 70%" or "confidence level: ~65%"
-        r"confidence[^:]*?:\s*~?\s*(\d{1,3})%",
+        r"confidence[^:]*?:\s*\*{0,2}\s*~?\s*(\d{1,3})%",
         # "~50%" preceded by probability/confidence context within 50 chars
         r"(?:probability|confidence|estimate)[^.]{0,50}~\s*(\d{1,3})%",
         # "75% confident" or "75% probability" or "75% likely"

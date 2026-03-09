@@ -9,7 +9,7 @@ async def query_model(
     model: str,
     messages: List[Dict[str, str]],
     timeout: float = 120.0,
-    temperature: float = 0.7,
+    temperature: float = 1.0,
 ) -> Optional[Dict[str, Any]]:
     """
     Query a single model via OpenRouter API.

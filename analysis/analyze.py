@@ -1,7 +1,7 @@
 """
 Statistical analysis for diagnostic reflection experiment.
 Compares three conditions: baseline, adversarial self-critique, structured reflection.
-Outputs tables and figures.
+Outputs tables and figures for CPH poster and AMIA submission.
 
 Key analyses:
 1. Primary: McNemar's test for each reflection condition vs baseline
@@ -145,6 +145,108 @@ def score_accuracy(row: pd.Series, nlp_extractions: dict = None) -> dict:
     }
 
 
+def _accuracy_difference_ci(
+    baseline_correct: np.ndarray,
+    cond_correct: np.ndarray,
+    n_bootstrap: int = 2000,
+    alpha: float = 0.05,
+) -> dict:
+    """Bootstrap 95% CI for accuracy difference (condition - baseline).
+
+    Uses paired bootstrap: resample case-model indices, compute accuracy
+    difference each time, return percentile interval.
+    """
+    baseline_correct = np.asarray(baseline_correct, dtype=float)
+    cond_correct = np.asarray(cond_correct, dtype=float)
+    n = len(baseline_correct)
+    if n == 0:
+        return {"lower": None, "upper": None}
+
+    rng = np.random.default_rng(42)
+    diffs = np.empty(n_bootstrap)
+    for i in range(n_bootstrap):
+        idx = rng.integers(0, n, size=n)
+        diffs[i] = cond_correct[idx].mean() - baseline_correct[idx].mean()
+
+    lower = float(np.percentile(diffs, 100 * alpha / 2))
+    upper = float(np.percentile(diffs, 100 * (1 - alpha / 2)))
+    return {"lower": round(lower, 4), "upper": round(upper, 4)}
+
+
+def _compute_ece(conf: np.ndarray, correct: np.ndarray, n_bins: int = 10) -> float:
+    """Compute Expected Calibration Error from confidence and binary accuracy arrays."""
+    bin_boundaries = np.linspace(0, 1, n_bins + 1)
+    ece = 0.0
+    for i in range(n_bins):
+        in_bin = (conf >= bin_boundaries[i]) & (conf < bin_boundaries[i + 1])
+        if in_bin.sum() > 0:
+            bin_acc = correct[in_bin].mean()
+            bin_conf = conf[in_bin].mean()
+            ece += (in_bin.sum() / len(conf)) * abs(bin_acc - bin_conf)
+    return ece
+
+
+def _bootstrap_ece_difference(
+    df: pd.DataFrame,
+    cond_a: str,
+    cond_b: str,
+    n_bootstrap: int = 1000,
+    alpha: float = 0.05,
+) -> dict:
+    """Bootstrap 95% CI for ECE difference (cond_b - cond_a).
+
+    Resamples case-model pairs and recomputes ECE for each condition.
+    Returns point estimate and percentile CI.
+    """
+    # Get paired data: same case-model must exist in both conditions with confidence
+    a_df = df[(df["condition"] == cond_a) & df["numeric_confidence"].notna()][
+        ["case_id", "model", "numeric_confidence", "top1_correct"]
+    ].copy()
+    a_df.columns = ["case_id", "model", "conf_a", "correct_a"]
+
+    b_df = df[(df["condition"] == cond_b) & df["numeric_confidence"].notna()][
+        ["case_id", "model", "numeric_confidence", "top1_correct"]
+    ].copy()
+    b_df.columns = ["case_id", "model", "conf_b", "correct_b"]
+
+    merged = a_df.merge(b_df, on=["case_id", "model"])
+    if len(merged) < 10:
+        return None
+
+    conf_a = merged["conf_a"].values / 100
+    correct_a = merged["correct_a"].astype(float).values
+    conf_b = merged["conf_b"].values / 100
+    correct_b = merged["correct_b"].astype(float).values
+
+    # Point estimate
+    ece_a = _compute_ece(conf_a, correct_a)
+    ece_b = _compute_ece(conf_b, correct_b)
+    point_diff = ece_b - ece_a
+
+    # Bootstrap
+    n = len(merged)
+    rng = np.random.default_rng(42)
+    diffs = np.empty(n_bootstrap)
+    for i in range(n_bootstrap):
+        idx = rng.integers(0, n, size=n)
+        ece_a_boot = _compute_ece(conf_a[idx], correct_a[idx])
+        ece_b_boot = _compute_ece(conf_b[idx], correct_b[idx])
+        diffs[i] = ece_b_boot - ece_a_boot
+
+    lower = float(np.percentile(diffs, 100 * alpha / 2))
+    upper = float(np.percentile(diffs, 100 * (1 - alpha / 2)))
+
+    return {
+        f"ece_{cond_a}": round(float(ece_a), 4),
+        f"ece_{cond_b}": round(float(ece_b), 4),
+        "difference": round(float(point_diff), 4),
+        "ci_95_lower": round(lower, 4),
+        "ci_95_upper": round(upper, 4),
+        "n_paired": len(merged),
+        "n_bootstrap": n_bootstrap,
+    }
+
+
 def primary_analysis(df: pd.DataFrame) -> dict:
     """
     Primary analysis: paired comparison of accuracy across conditions.
@@ -207,7 +309,14 @@ def primary_analysis(df: pd.DataFrame) -> dict:
                 "both_wrong": int(((paired["baseline"] == False) & (paired[cond] == False)).sum()),
                 "statistic": mcnemar_stat,
                 "p_value": mcnemar_p,
+                "significant_bonferroni": mcnemar_p < 0.0167,  # α/3 correction
                 "net_switches": int(b_wrong_a_right) - int(b_right_a_wrong),
+                "accuracy_difference": float(
+                    paired[cond].mean() - paired["baseline"].mean()
+                ),
+                "accuracy_difference_ci_95": _accuracy_difference_ci(
+                    paired["baseline"].values, paired[cond].values
+                ),
             }
 
     # ── McNemar's: adversarial vs structured (head-to-head) ──
@@ -234,6 +343,13 @@ def primary_analysis(df: pd.DataFrame) -> dict:
                 "adversarial_right_structured_wrong": int(a_right_s_wrong),
                 "statistic": stat,
                 "p_value": p,
+                "significant_bonferroni": p < 0.0167,  # α/3 correction
+                "accuracy_difference": float(
+                    paired_av["structured"].mean() - paired_av["adversarial"].mean()
+                ),
+                "accuracy_difference_ci_95": _accuracy_difference_ci(
+                    paired_av["adversarial"].values, paired_av["structured"].values
+                ),
             }
 
     # ── Stratified by difficulty ──
@@ -350,6 +466,14 @@ def confidence_calibration_analysis(df: pd.DataFrame) -> dict:
             "high_confidence_helped": int(high_conf["reflection_helped"].sum()) if len(high_conf) > 0 else 0,
             "high_confidence_hurt": int(high_conf["reflection_hurt"].sum()) if len(high_conf) > 0 else 0,
         }
+
+    # ── Bootstrap 95% CIs for ECE differences between conditions ──
+    conditions_with_data = list(results["by_condition"].keys())
+    if "baseline" in conditions_with_data:
+        for cond in [c for c in conditions_with_data if c != "baseline"]:
+            ece_diffs = _bootstrap_ece_difference(df, "baseline", cond)
+            if ece_diffs is not None:
+                results[f"ece_diff_{cond}_vs_baseline"] = ece_diffs
 
     return results
 
@@ -697,8 +821,8 @@ def generate_summary_tables(primary: dict, secondary: dict, df: pd.DataFrame,
 
     # ── Table 2: McNemar's tests ──
     md += "\n## Table 2: McNemar's Tests (Paired Switches)\n\n"
-    md += "| Comparison | Rescued | Sabotaged | Net | χ² | p-value |\n"
-    md += "|------------|---------|-----------|-----|-----|----------|\n"
+    md += "| Comparison | Rescued | Sabotaged | Net | Δ Accuracy [95% CI] | χ² | p-value | Sig (α=.0167) |\n"
+    md += "|------------|---------|-----------|-----|---------------------|-----|----------|---------------|\n"
 
     for key, val in primary.items():
         if key.startswith("mcnemar_"):
@@ -706,7 +830,11 @@ def generate_summary_tables(primary: dict, secondary: dict, df: pd.DataFrame,
             rescued = val.get("baseline_wrong_cond_right", val.get("adversarial_wrong_structured_right", 0))
             sabotaged = val.get("baseline_right_cond_wrong", val.get("adversarial_right_structured_wrong", 0))
             net = val.get("net_switches", rescued - sabotaged)
-            md += f"| {label} | {rescued} | {sabotaged} | {net:+d} | {val.get('statistic', 0):.2f} | {val.get('p_value', 1):.4f} |\n"
+            acc_diff = val.get("accuracy_difference", 0)
+            ci = val.get("accuracy_difference_ci_95", {})
+            ci_str = f"[{ci.get('lower', 0):+.1%}, {ci.get('upper', 0):+.1%}]" if ci.get("lower") is not None else "—"
+            sig = "✓" if val.get("significant_bonferroni", False) else "✗"
+            md += f"| {label} | {rescued} | {sabotaged} | {net:+d} | {acc_diff:+.1%} {ci_str} | {val.get('statistic', 0):.2f} | {val.get('p_value', 1):.4f} | {sig} |\n"
 
     # ── Table 3: Accuracy by difficulty × condition ──
     md += "\n## Table 3: Top-1 Accuracy by Difficulty × Condition\n\n"
