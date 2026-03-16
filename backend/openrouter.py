@@ -41,6 +41,14 @@ async def query_model(
                 headers=headers,
                 json=payload
             )
+
+            # Print rate limit headers for monitoring
+            remaining = response.headers.get('X-RateLimit-Remaining')
+            limit = response.headers.get('X-RateLimit-Limit')
+            reset = response.headers.get('X-RateLimit-Reset')
+            if remaining is not None:
+                print(f"  Rate limit: {remaining}/{limit} remaining, reset: {reset}")
+
             response.raise_for_status()
 
             data = response.json()
@@ -48,22 +56,32 @@ async def query_model(
 
             usage = data.get('usage', {})
             return {
-                'content': message.get('content'),
+                'content': message.get('content') or '',
                 'reasoning_details': message.get('reasoning_details'),
                 'input_tokens': usage.get('prompt_tokens', 0),
                 'output_tokens': usage.get('completion_tokens', 0),
                 'model_used': data.get('model', model),
             }
 
+    except httpx.HTTPStatusError as e:
+        # Print rate limit info on 429 errors specifically
+        if e.response.status_code == 429:
+            remaining = e.response.headers.get('X-RateLimit-Remaining')
+            limit = e.response.headers.get('X-RateLimit-Limit')
+            reset = e.response.headers.get('X-RateLimit-Reset')
+            print(f"  RATE LIMITED {model}: {remaining}/{limit}, reset: {reset}")
+        print(f"Error querying model {model}: {e}")
+        raise  # Re-raise so experiment.py catches it and logs the error properly
+
     except Exception as e:
         print(f"Error querying model {model}: {e}")
-        return None
+        raise  # Re-raise instead of returning None
 
 
 async def query_models_parallel(
     models: List[str],
     messages: List[Dict[str, str]],
-    temperature: float = 0.7,
+    temperature: float = 1.0,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
     """
     Query multiple models in parallel.
